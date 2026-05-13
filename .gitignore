@@ -1,0 +1,14 @@
+# Bỏ qua thư mục chứa các thư viện đã tải về (vì nó rất nặng, ai cần chạy code sẽ tự npm install)
+node_modules/
+
+# Bỏ qua các file chứa biến môi trường (CỰC KỲ QUAN TRỌNG: Giúp giấu API Key và Discord Token)
+.env
+
+# Bỏ qua các file log lỗi của npm
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Bỏ qua các file hệ thống của hệ điều hành
+.DS_Store
+Thumbs.db
