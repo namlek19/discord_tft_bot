@@ -1,6 +1,7 @@
 require('dotenv').config();
-const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, EmbedBuilder } = require('discord.js');
+const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, EmbedBuilder, AttachmentBuilder } = require('discord.js');
 const axios = require('axios');
+const { createCanvas } = require('canvas');
 
 const client = new Client({
     intents: [
@@ -10,6 +11,7 @@ const client = new Client({
     ]
 });
 
+// Đã gỡ bỏ lệnh /quetsach
 const commands = [
     new SlashCommandBuilder()
         .setName('stats')
@@ -37,6 +39,34 @@ function getRankColor(tier) {
         case 'CHALLENGER': return '#00ffff';
         default: return '#2b2d31'; 
     }
+}
+
+async function createHistoryImage(historyArray) {
+    const width = 500; 
+    const height = 60; 
+    const canvas = createCanvas(width, height);
+    const ctx = canvas.getContext('2d');
+
+    ctx.font = 'bold 32px "Segoe UI", Arial, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    const spacing = width / historyArray.length;
+
+    historyArray.forEach((top, index) => {
+        const x = (index * spacing) + (spacing / 2);
+        const y = height / 2;
+
+        if (top === 1) ctx.fillStyle = '#b83cb8'; 
+        else if (top === 2) ctx.fillStyle = '#5b5af5'; 
+        else if (top === 3) ctx.fillStyle = '#2ecc71'; 
+        else if (top === 4) ctx.fillStyle = '#ffd700'; 
+        else ctx.fillStyle = '#7a7a7a'; 
+
+        ctx.fillText(top.toString(), x, y);
+    });
+
+    return new AttachmentBuilder(canvas.toBuffer(), { name: 'history-image.png' });
 }
 
 async function fetchTFTData(gameName, tagLine) {
@@ -89,23 +119,13 @@ async function fetchTFTData(gameName, tagLine) {
             }
         }
 
-        const formattedHistory = history.map(top => {
-            if (top === 1) return `\u001b[1;35m${top}\u001b[0m`; 
-            if (top === 2) return `\u001b[1;34m${top}\u001b[0m`; 
-            if (top === 3) return `\u001b[1;32m${top}\u001b[0m`; 
-            if (top === 4) return `\u001b[1;33m${top}\u001b[0m`; 
-            return `${top}`;
-        }).join(', ');
-        
-        const ansiString = `\`\`\`ansi\n${formattedHistory}\n\`\`\``;
-
         return {
             success: true,
             rank: rankString,
             thumbnailUrl: thumbnailUrl,
             totalGames: totalGames,
             top4Rate: top4Rate,
-            ansiHistory: ansiString,
+            rawHistory: history,
             embedColor: embedColor
         };
 
@@ -143,6 +163,8 @@ client.on('interactionCreate', async interaction => {
             return interaction.editReply(`Không tìm thấy dữ liệu cho **${playerInput}**.`);
         }
 
+        const historyAttachment = await createHistoryImage(data.rawHistory);
+
         const statsEmbed = new EmbedBuilder()
             .setColor(data.embedColor)
             .setTitle(`Account: ${gameName}`)
@@ -152,12 +174,13 @@ client.on('interactionCreate', async interaction => {
                 { name: 'Rank', value: `**${data.rank}**`, inline: false },
                 { name: 'Total games', value: `${data.totalGames}`, inline: true },
                 { name: '% Top 4', value: `${data.top4Rate}%`, inline: true },
-                { name: `LSĐ (10 game):`, value: data.ansiHistory, inline: false }
+                { name: `LSĐ (10 game):`, value: '\u200B', inline: false }
             )
+            .setImage('attachment://history-image.png')
             .setFooter({ text: 'Riot API' })
             .setTimestamp();
 
-        await interaction.editReply({ embeds: [statsEmbed] });
+        await interaction.editReply({ embeds: [statsEmbed], files: [historyAttachment] });
     }
 });
 
