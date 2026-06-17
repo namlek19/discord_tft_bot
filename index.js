@@ -614,13 +614,20 @@ client.on('messageCreate', async message => {
     const { author, guildId } = message;
 
     if (cmd === 'latxu') {
-        const amount = parseInt(args[1]);
-        const choice = args[2]?.toLowerCase() === 'x' ? 'xấp' : 'ngửa';
-
-        if (isNaN(amount) || amount < 1)
-            return message.reply('Nhập số tiền hợp lệ. VD: `hacash latxu 300` hoặc `hacash latxu 300 x`');
+        const hasX = args[1]?.toLowerCase() === 'x';
+        const choice = hasX ? 'xấp' : 'ngửa';
+        const amountArg = hasX ? args[2] : args[1];
+        const isAll = amountArg?.toLowerCase() === 'all';
 
         const user = await getOrCreateUser(author.id, guildId, author.username);
+        const amount = Math.min(isAll ? user.hacash : parseInt(amountArg), 500000);
+
+        if (isAll && user.hacash < 1)
+            return message.reply('Bạn không có hacash nào để cược!');
+
+        if (!isAll && (isNaN(amount) || amount < 1))
+            return message.reply('Nhập số tiền hợp lệ. VD: `hacash latxu 300` hoặc `hacash latxu all`');
+
         if (user.hacash < amount)
             return message.reply(`Không đủ hacash! Bạn có **${user.hacash.toLocaleString()} hacash**.`);
 
