@@ -64,6 +64,7 @@ const commands = [
         .addStringOption(opt =>
             opt.setName('player').setDescription('Tên in-game (VD: Namblee#Mar30)').setRequired(true)
         ),
+    new SlashCommandBuilder().setName('help').setDescription('Hướng dẫn sử dụng bot'),
     new SlashCommandBuilder().setName('daily').setDescription('Nhận 1,000–10,000 hacash mỗi ngày'),
     new SlashCommandBuilder().setName('balance').setDescription('Xem số dư hacash của bạn'),
     new SlashCommandBuilder().setName('matches').setDescription('Xem trận đang diễn ra và 5 trận tiếp theo'),
@@ -74,6 +75,31 @@ const commands = [
     new SlashCommandBuilder()
         .setName('setchannel')
         .setDescription('Đặt channel nhận thông báo trận đấu (Admin)')
+        .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+    new SlashCommandBuilder()
+        .setName('setprefix')
+        .setDescription('Đổi prefix lệnh chat cho server (Admin)')
+        .addStringOption(opt =>
+            opt.setName('prefix').setDescription('Prefix mới, VD: ha').setRequired(true)
+        )
+        .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+    new SlashCommandBuilder()
+        .setName('setalias')
+        .setDescription('Đặt tên rút gọn cho lệnh chat (Admin)')
+        .addStringOption(opt =>
+            opt.setName('command').setDescription('Lệnh gốc').setRequired(true)
+                .addChoices(
+                    { name: 'daily', value: 'daily' },
+                    { name: 'balance', value: 'balance' },
+                    { name: 'matches', value: 'matches' },
+                    { name: 'mybet', value: 'mybet' },
+                    { name: 'leaderboard', value: 'leaderboard' },
+                    { name: 'latxu', value: 'latxu' }
+                )
+        )
+        .addStringOption(opt =>
+            opt.setName('alias').setDescription('Tên rút gọn, VD: lx').setRequired(true)
+        )
         .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
 ].map(cmd => cmd.toJSON());
 
@@ -328,6 +354,28 @@ client.on('interactionCreate', async interaction => {
             });
         }
 
+        // /help
+        if (commandName === 'help') {
+            const cfg = await ServerConfig.findOne({ guildId: interaction.guildId });
+            const p = cfg?.prefix ?? 'hacash';
+
+            const lines = [
+                `\`/daily\` : nhận hacash hàng ngày : \`/daily\``,
+                `\`/balance\` : xem số dư : \`/balance\``,
+                `\`/leaderboard\` : bảng xếp hạng server : \`/leaderboard\``,
+                `\`/matches\` : trận đang diễn ra & sắp tới : \`/matches\``,
+                `\`/betwin\` : cược đội thắng/hòa (x3) : \`/betwin\``,
+                `\`/bettiso\` : cược tỉ số chính xác (x10) : \`/bettiso\``,
+                `\`/mybet\` : xem cược đang chờ kết quả : \`/mybet\``,
+                `\`${p} latxu\` : lật xu ăn x1 : \`${p} latxu [s] <số tiền | all>\``,
+                `\`/setchannel\` : đặt channel thông báo trận (Admin) : \`/setchannel\``,
+                `\`/setprefix\` : đổi prefix lệnh chat (Admin) : \`/setprefix <prefix>\``,
+                `\`/setalias\` : đặt tên rút gọn cho lệnh (Admin) : \`/setalias <lệnh> <alias>\``,
+            ];
+
+            return interaction.reply(`**Các lệnh hiện có:**\n\n${lines.join('\n')}`);
+        }
+
         // /daily
         if (commandName === 'daily') {
             await interaction.deferReply();
@@ -455,6 +503,33 @@ client.on('interactionCreate', async interaction => {
                 { upsert: true, new: true }
             );
             return interaction.editReply(`✅ Đã đặt <#${interaction.channelId}> làm channel thông báo.`);
+        }
+
+        // /setprefix
+        if (commandName === 'setprefix') {
+            await interaction.deferReply();
+            const newPrefix = interaction.options.getString('prefix').trim();
+            if (newPrefix.length < 1 || newPrefix.length > 20)
+                return interaction.editReply('Prefix phải từ 1–20 ký tự.');
+            await ServerConfig.findOneAndUpdate(
+                { guildId: interaction.guildId },
+                { prefix: newPrefix },
+                { upsert: true, new: true }
+            );
+            return interaction.editReply(`✅ Prefix đã đổi thành \`${newPrefix}\`. Dùng \`${newPrefix} <lệnh>\` để gọi.`);
+        }
+
+        // /setalias
+        if (commandName === 'setalias') {
+            await interaction.deferReply();
+            const command = interaction.options.getString('command');
+            const alias = interaction.options.getString('alias').trim().toLowerCase();
+            await ServerConfig.findOneAndUpdate(
+                { guildId: interaction.guildId },
+                { $set: { [`commandAliases.${alias}`]: command } },
+                { upsert: true, new: true }
+            );
+            return interaction.editReply(`✅ \`${alias}\` → \`${command}\` đã được đặt.`);
         }
     }
 
@@ -603,20 +678,25 @@ client.on('interactionCreate', async interaction => {
     }
 });
 
-// ── Message Commands (hacash <lệnh>) ─────────────────────────────────────────
+// ── Message Commands ──────────────────────────────────────────────────────────
 client.on('messageCreate', async message => {
     if (message.author.bot || !message.guildId) return;
     const content = message.content.trim();
-    if (!content.toLowerCase().startsWith('hacash ')) return;
-
-    const args = content.slice(7).trim().split(/\s+/);
-    const cmd = args[0]?.toLowerCase();
     const { author, guildId } = message;
 
+    const config = await ServerConfig.findOne({ guildId });
+    const prefix = config?.prefix ?? 'hacash';
+
+    if (!content.toLowerCase().startsWith(prefix.toLowerCase() + ' ')) return;
+
+    const args = content.slice(prefix.length + 1).trim().split(/\s+/);
+    const rawCmd = args[0]?.toLowerCase();
+    const cmd = config?.commandAliases?.get(rawCmd) ?? rawCmd;
+
     if (cmd === 'latxu') {
-        const hasX = args[1]?.toLowerCase() === 'x';
-        const choice = hasX ? 'xấp' : 'ngửa';
-        const amountArg = hasX ? args[2] : args[1];
+        const hasS = args[1]?.toLowerCase() === 's';
+        const choice = hasS ? 'sấp' : 'ngửa';
+        const amountArg = hasS ? args[2] : args[1];
         const isAll = amountArg?.toLowerCase() === 'all';
 
         const user = await getOrCreateUser(author.id, guildId, author.username);
@@ -626,17 +706,20 @@ client.on('messageCreate', async message => {
             return message.reply('Bạn không có hacash nào để cược!');
 
         if (!isAll && (isNaN(amount) || amount < 1))
-            return message.reply('Nhập số tiền hợp lệ. VD: `hacash latxu 300` hoặc `hacash latxu all`');
+            return message.reply(`Nhập số tiền hợp lệ. VD: \`${prefix} latxu 300\` hoặc \`${prefix} latxu all\``);
 
         if (user.hacash < amount)
             return message.reply(`Không đủ hacash! Bạn có **${user.hacash.toLocaleString()} hacash**.`);
 
         const roll = Math.floor(Math.random() * 1000) + 1;
-        const result = roll % 2 === 0 ? 'ngửa' : 'xấp';
+        const result = roll % 2 === 0 ? 'ngửa' : 'sấp';
         const win = result === choice;
         const payout = win ? amount : -amount;
 
         await User.updateOne({ discordId: author.id, guildId }, { $inc: { hacash: payout } });
+
+        await message.channel.sendTyping();
+        await new Promise(r => setTimeout(r, 1000 + Math.random() * 1000));
 
         return message.reply([
             `${win ? '🎉' : '💸'} **Lật xu** — **${author.username}**`,
