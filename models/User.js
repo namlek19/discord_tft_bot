@@ -5,7 +5,10 @@ const userSchema = new mongoose.Schema({
     guildId: { type: String, required: true },
     username: String,
     hacash: { type: Number, default: 0 },
-    lastDaily: { type: Date, default: null }
+    lastDaily: { type: Date, default: null },
+    gachaPity: { type: Number, default: 0 },
+    dailySentAmount: { type: Number, default: 0 },
+    lastSentDate: { type: Date, default: null }
 });
 
 userSchema.index({ discordId: 1, guildId: 1 }, { unique: true });

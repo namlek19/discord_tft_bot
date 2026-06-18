@@ -12,6 +12,7 @@ const mongoose = require('mongoose');
 const User = require('./models/User');
 const Prediction = require('./models/Prediction');
 const ServerConfig = require('./models/ServerConfig');
+const Character = require('./models/Character');
 
 const WC_BASE = 'https://api.football-data.org/v4';
 const WC_HEADERS = { 'X-Auth-Token': process.env.WORLDCUP_API_KEY };
@@ -48,6 +49,55 @@ const FLAG_MAP = {
 function getFlag(name) { return FLAG_MAP[name] ?? ''; }
 function teamStr(name) { const f = getFlag(name); return f ? `${f} ${name}` : name; }
 
+// ── Gacha Data ────────────────────────────────────────────────────────────────
+let characterCache = [];
+
+function rollRank(pity) {
+    if (pity >= 299) return 'S';
+    const r = Math.random();
+    if (r < 0.004) return 'S';
+    if (r < 0.060) return 'A';
+    if (r < 0.280) return 'B';
+    return 'C';
+}
+
+function doGacha(count, pity) {
+    const results = [];
+    let p = pity;
+    for (let i = 0; i < count; i++) {
+        const rank = rollRank(p);
+        const pool = characterCache.filter(c => c.rank === rank);
+        results.push(pool[Math.floor(Math.random() * pool.length)]);
+        p = rank === 'S' ? 0 : p + 1;
+    }
+    return { results, newPity: p };
+}
+
+function buildGachaOutput(results) {
+    const RST = '[0m', PUR = '[35m', GLD = '[1;33m';
+    const x10 = results.length === 10;
+    const total = results.reduce((s, c) => s + c.value, 0);
+
+    const header = x10
+        ? `🎰 **Gacha x10** — Tổng nhận: **${total.toLocaleString()} hacash**`
+        : `🎰 **Gacha x1**`;
+
+    const lines = results.map((c, i) => {
+        const pre = x10 ? `${String(i + 1).padStart(2)}. ` : '';
+        const money = `${c.value.toLocaleString()} hacash`;
+        if (c.rank === 'S') return `${pre}${GLD}${c.name} [S]${RST} — ${money}`;
+        if (c.rank === 'A') return `${pre}${PUR}${c.name} [A]${RST} — ${money}`;
+        return `${pre}${c.name} [${c.rank}] — ${money}`;
+    });
+
+    let out = `${header}\n\`\`\`ansi\n${lines.join('\n')}\n\`\`\``;
+
+    for (const s of results.filter(c => c.rank === 'S'))
+        out += `\n🌟 Nổ vàng rồi! 🌟\n**${s.name} [S]** — ${s.value.toLocaleString()} hacash\n✨✨✨✨✨✨✨✨✨✨`;
+
+    return out;
+}
+
 mongoose.connect(process.env.MONGODB_URI)
     .then(() => console.log('✅ MongoDB connected'))
     .catch(err => console.error('MongoDB error:', err));
@@ -72,6 +122,13 @@ const commands = [
     new SlashCommandBuilder().setName('bettiso').setDescription('Cược tỉ số — đúng x10, lệch 1 hiệu số +50%'),
     new SlashCommandBuilder().setName('mybet').setDescription('Xem các cược đang chờ kết quả'),
     new SlashCommandBuilder().setName('leaderboard').setDescription('Bảng xếp hạng Hacash top 10'),
+    new SlashCommandBuilder()
+        .setName('gacha')
+        .setDescription('Quay gacha — x1 (500 hacash) hoặc x10 (5,000 hacash)')
+        .addIntegerOption(opt =>
+            opt.setName('amount').setDescription('Số lần quay').setRequired(false)
+                .addChoices({ name: 'x1 — 500 hacash', value: 1 }, { name: 'x10 — 5,000 hacash', value: 10 })
+        ),
     new SlashCommandBuilder()
         .setName('setchannel')
         .setDescription('Đặt channel nhận thông báo trận đấu (Admin)')
@@ -207,10 +264,10 @@ async function fetchLiveMatches() {
     return res.data.matches;
 }
 
-function buildMatchSelectMenu(matches, type) {
+function buildMatchSelectMenu(matches, type, userId) {
     return new ActionRowBuilder().addComponents(
         new StringSelectMenuBuilder()
-            .setCustomId(`${type}_select`)
+            .setCustomId(`${type}_select_${userId}`)
             .setPlaceholder('Chọn trận đấu...')
             .addOptions(matches.map(m => ({
                 label: `${m.homeTeam.name} vs ${m.awayTeam.name}`.slice(0, 100),
@@ -311,6 +368,9 @@ client.once('ready', async () => {
         console.log('✅ Commands registered');
     } catch (err) { console.error(err); }
 
+    characterCache = await Character.find().lean();
+    console.log(`✅ Loaded ${characterCache.length} characters`);
+
     setInterval(settlePredictions, 5 * 60 * 1000);
     setInterval(checkMatchReminders, 5 * 60 * 1000);
 });
@@ -368,6 +428,7 @@ client.on('interactionCreate', async interaction => {
                 `\`/bettiso\` : cược tỉ số chính xác (x10) : \`/bettiso\``,
                 `\`/mybet\` : xem cược đang chờ kết quả : \`/mybet\``,
                 `\`${p} latxu\` : lật xu ăn x1 : \`${p} latxu [s] <số tiền | all>\``,
+                `\`/gacha\` · \`${p} gacha [10]\` : quay gacha (500/lần) : \`/gacha [amount]\``,
                 `\`/setchannel\` : đặt channel thông báo trận (Admin) : \`/setchannel\``,
                 `\`/setprefix\` : đổi prefix lệnh chat (Admin) : \`/setprefix <prefix>\``,
                 `\`/setalias\` : đặt tên rút gọn cho lệnh (Admin) : \`/setalias <lệnh> <alias>\``,
@@ -449,7 +510,7 @@ client.on('interactionCreate', async interaction => {
                 if (!matches.length) return interaction.editReply('Không có trận nào sắp diễn ra để cược.');
                 return interaction.editReply({
                     content: '**🏆 Cược đội thắng** — Chọn trận:\n_Đúng x3 | Sai mất cược_',
-                    components: [buildMatchSelectMenu(matches, 'bw')]
+                    components: [buildMatchSelectMenu(matches, 'bw', interaction.user.id)]
                 });
             } catch { return interaction.editReply('Lỗi khi lấy dữ liệu. Thử lại sau nhé.'); }
         }
@@ -462,7 +523,7 @@ client.on('interactionCreate', async interaction => {
                 if (!matches.length) return interaction.editReply('Không có trận nào sắp diễn ra để cược.');
                 return interaction.editReply({
                     content: '**🎯 Cược tỉ số** — Chọn trận:\n_Đúng x10 | Lệch 1 hiệu số +50% | Còn lại mất cược_',
-                    components: [buildMatchSelectMenu(matches, 'bs')]
+                    components: [buildMatchSelectMenu(matches, 'bs', interaction.user.id)]
                 });
             } catch { return interaction.editReply('Lỗi khi lấy dữ liệu. Thử lại sau nhé.'); }
         }
@@ -492,6 +553,28 @@ client.on('interactionCreate', async interaction => {
 
             const lines = top.map((u, i) => `${i + 1}. ${u.username ?? 'Unknown'} - ${u.hacash.toLocaleString()} hacash`);
             return interaction.editReply(`# Bảng xếp hạng Hacash\nServer: ${interaction.guild.name}\n\n${lines.join('\n')}`);
+        }
+
+        // /gacha
+        if (commandName === 'gacha') {
+            await interaction.deferReply();
+            const count = interaction.options.getInteger('amount') ?? 1;
+            const cost = count * 500;
+            const user = await getOrCreateUser(interaction.user.id, interaction.guildId, interaction.user.username);
+
+            if (user.hacash < cost)
+                return interaction.editReply(`Không đủ hacash! Cần **${cost.toLocaleString()}**, bạn có **${user.hacash.toLocaleString()}**.`);
+
+            const { results, newPity } = doGacha(count, user.gachaPity ?? 0);
+            const totalEarned = results.reduce((s, c) => s + c.value, 0);
+            const net = totalEarned - cost;
+
+            await User.updateOne(
+                { discordId: interaction.user.id, guildId: interaction.guildId },
+                { $inc: { hacash: net }, $set: { gachaPity: newPity } }
+            );
+
+            return interaction.editReply(buildGachaOutput(results));
         }
 
         // /setchannel
@@ -537,21 +620,29 @@ client.on('interactionCreate', async interaction => {
     if (interaction.isStringSelectMenu()) {
         const [matchId, homeTeam, awayTeam] = interaction.values[0].split('|');
 
-        if (interaction.customId === 'bw_select') {
+        if (interaction.customId.startsWith('bw_select_')) {
+            const ownerId = interaction.customId.slice('bw_select_'.length);
+            if (interaction.user.id !== ownerId)
+                return interaction.reply({ content: 'Đây không phải lượt bet của bạn!', ephemeral: true });
+
             return interaction.update({
                 content: `**🏆 Cược đội thắng**\n${teamStr(homeTeam)} vs ${teamStr(awayTeam)}\nChọn đội bạn muốn cược:`,
                 components: [new ActionRowBuilder().addComponents(
-                    new ButtonBuilder().setCustomId(`bw_t_${matchId}_H`).setLabel(`1️⃣  ${homeTeam}`.slice(0, 80)).setStyle(ButtonStyle.Primary),
-                    new ButtonBuilder().setCustomId(`bw_t_${matchId}_D`).setLabel('🤝  Hòa').setStyle(ButtonStyle.Secondary),
-                    new ButtonBuilder().setCustomId(`bw_t_${matchId}_A`).setLabel(`2️⃣  ${awayTeam}`.slice(0, 80)).setStyle(ButtonStyle.Primary)
+                    new ButtonBuilder().setCustomId(`bw_t_${matchId}_H_${ownerId}`).setLabel(`1️⃣  ${homeTeam}`.slice(0, 80)).setStyle(ButtonStyle.Primary),
+                    new ButtonBuilder().setCustomId(`bw_t_${matchId}_D_${ownerId}`).setLabel('🤝  Hòa').setStyle(ButtonStyle.Secondary),
+                    new ButtonBuilder().setCustomId(`bw_t_${matchId}_A_${ownerId}`).setLabel(`2️⃣  ${awayTeam}`.slice(0, 80)).setStyle(ButtonStyle.Primary)
                 )]
             });
         }
 
-        if (interaction.customId === 'bs_select') {
+        if (interaction.customId.startsWith('bs_select_')) {
+            const ownerId = interaction.customId.slice('bs_select_'.length);
+            if (interaction.user.id !== ownerId)
+                return interaction.reply({ content: 'Đây không phải lượt bet của bạn!', ephemeral: true });
+
             const user = await getOrCreateUser(interaction.user.id, interaction.guildId, interaction.user.username);
             const modal = new ModalBuilder()
-                .setCustomId(`bs_m_${matchId}`)
+                .setCustomId(`bs_m_${matchId}_${ownerId}`)
                 .setTitle(`${homeTeam} vs ${awayTeam}`.slice(0, 45));
             modal.addComponents(
                 new ActionRowBuilder().addComponents(
@@ -579,6 +670,11 @@ client.on('interactionCreate', async interaction => {
     // ── Buttons ────────────────────────────────────────────────────────────────
     if (interaction.isButton() && interaction.customId.startsWith('bw_t_')) {
         const parts = interaction.customId.split('_');
+        // bw_t_{matchId}_{code}_{ownerId}
+        const ownerId = parts[4];
+        if (interaction.user.id !== ownerId)
+            return interaction.reply({ content: 'Đây không phải lượt bet của bạn!', ephemeral: true });
+
         const user = await getOrCreateUser(interaction.user.id, interaction.guildId, interaction.user.username);
         const modal = new ModalBuilder()
             .setCustomId(`bw_m_${parts[2]}_${parts[3]}`)
@@ -638,7 +734,7 @@ client.on('interactionCreate', async interaction => {
 
         if (customId.startsWith('bs_m_')) {
             await interaction.deferReply();
-            const matchId = parseInt(customId.replace('bs_m_', ''));
+            const matchId = parseInt(customId.slice('bs_m_'.length));
             const homeScore = parseInt(interaction.fields.getTextInputValue('home_score'));
             const awayScore = parseInt(interaction.fields.getTextInputValue('away_score'));
             const amount = parseInt(interaction.fields.getTextInputValue('bet_amount'));
@@ -802,6 +898,70 @@ client.on('messageCreate', async message => {
         if (!top.length) return message.reply('Chưa có ai trong bảng xếp hạng.');
         const lines = top.map((u, i) => `${i + 1}. ${u.username ?? 'Unknown'} - ${u.hacash.toLocaleString()} hacash`);
         return message.reply(`# Bảng xếp hạng Hacash\nServer: ${message.guild.name}\n\n${lines.join('\n')}`);
+    }
+
+    if (cmd === 'gacha') {
+        const count = args[1] === '10' ? 10 : 1;
+        const cost = count * 500;
+        const user = await getOrCreateUser(author.id, guildId, author.username);
+
+        if (user.hacash < cost)
+            return message.reply(`Không đủ hacash! Cần **${cost.toLocaleString()}**, bạn có **${user.hacash.toLocaleString()}**.`);
+
+        const { results, newPity } = doGacha(count, user.gachaPity ?? 0);
+        const totalEarned = results.reduce((s, c) => s + c.value, 0);
+        const net = totalEarned - cost;
+
+        await User.updateOne(
+            { discordId: author.id, guildId },
+            { $inc: { hacash: net }, $set: { gachaPity: newPity } }
+        );
+
+        return message.reply(buildGachaOutput(results));
+    }
+
+    if (cmd === 'send') {
+        if (args.length < 3)
+            return message.reply(`Cú pháp: \`${prefix} send <tên> <số tiền>\``);
+
+        const amount = parseInt(args[args.length - 1]);
+        const targetName = args.slice(1, -1).join(' ');
+
+        if (!targetName || isNaN(amount) || amount < 1)
+            return message.reply(`Cú pháp: \`${prefix} send <tên> <số tiền>\``);
+
+        if (targetName.toLowerCase() === author.username.toLowerCase())
+            return message.reply('Không thể tự gửi cho mình!');
+
+        const sender = await getOrCreateUser(author.id, guildId, author.username);
+
+        const nowVN = toVNTime(new Date());
+        const todayStr = nowVN.toISOString().slice(0, 10);
+        const lastStr = sender.lastSentDate ? toVNTime(sender.lastSentDate).toISOString().slice(0, 10) : null;
+        const alreadySent = lastStr === todayStr ? (sender.dailySentAmount ?? 0) : 0;
+        const remaining = 200000 - alreadySent;
+
+        if (remaining <= 0)
+            return message.reply(`Hôm nay bạn đã gửi đủ **200,000 hacash** rồi. Quay lại ngày mai nhé!`);
+
+        if (amount > remaining)
+            return message.reply(`Bạn chỉ còn có thể gửi **${remaining.toLocaleString()} hacash** hôm nay (giới hạn 200,000/ngày).`);
+
+        if (sender.hacash < amount)
+            return message.reply(`Không đủ hacash! Bạn có **${sender.hacash.toLocaleString()} hacash**.`);
+
+        const recipient = await User.findOne({ guildId, username: { $regex: new RegExp(`^${targetName}$`, 'i') } });
+        if (!recipient)
+            return message.reply(`Không tìm thấy **${targetName}** trong server. Kiểm tra lại tên nhé.`);
+
+        const updateOp = lastStr === todayStr
+            ? { $inc: { hacash: -amount, dailySentAmount: amount }, $set: { lastSentDate: new Date() } }
+            : { $inc: { hacash: -amount }, $set: { dailySentAmount: amount, lastSentDate: new Date() } };
+
+        await User.updateOne({ discordId: author.id, guildId }, updateOp);
+        await User.updateOne({ _id: recipient._id }, { $inc: { hacash: amount } });
+
+        return message.reply(`✅ Đã gửi **${amount.toLocaleString()} hacash** cho **${recipient.username}**. Còn có thể gửi hôm nay: **${(remaining - amount).toLocaleString()} hacash**.`);
     }
 
     if (cmd === 'betwin' || cmd === 'bettiso') {
