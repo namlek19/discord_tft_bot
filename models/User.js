@@ -8,7 +8,10 @@ const userSchema = new mongoose.Schema({
     lastDaily: { type: Date, default: null },
     gachaPity: { type: Number, default: 0 },
     dailySentAmount: { type: Number, default: 0 },
-    lastSentDate: { type: Date, default: null }
+    lastSentDate: { type: Date, default: null },
+    defenseTeam: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Character' }],
+    heistAttackCooldown: { type: Date, default: null },
+    heistDefendCooldown: { type: Date, default: null }
 });
 
 userSchema.index({ discordId: 1, guildId: 1 }, { unique: true });

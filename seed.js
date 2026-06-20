@@ -3,9 +3,26 @@ const mongoose = require('mongoose');
 const Character = require('./models/Character');
 
 const characters = [
-    { name: '7 Chọ',             rank: 'S', value: 50000 },
-    { name: 'Sa Tị',             rank: 'S', value: 55000 },
-    { name: 'Lính Khanh',        rank: 'S', value: 60000 },
+    {
+        name: 'Bí Thư Học Đường', rank: 'SSS', value: 600000,
+        role: 'tank', hp_base: 2800, dmg_base: 350,
+        image_url: 'https://raw.githubusercontent.com/namlek19/anhdiscord/main/bithu.png'
+    },
+    {
+        name: '7 Chọ', rank: 'S', value: 100000,
+        role: 'dps', hp_base: 900, dmg_base: 420,
+        image_url: 'https://raw.githubusercontent.com/namlek19/anhdiscord/main/baycho.png'
+    },
+    {
+        name: 'Sa Tị', rank: 'S', value: 110000,
+        role: 'dps', hp_base: 850, dmg_base: 480,
+        image_url: 'https://raw.githubusercontent.com/namlek19/anhdiscord/main/sita.png'
+    },
+    {
+        name: 'Lính Khanh', rank: 'S', value: 120000,
+        role: 'tank', hp_base: 1800, dmg_base: 180,
+        image_url: 'https://raw.githubusercontent.com/namlek19/anhdiscord/main/linh_khanh.png'
+    },
     { name: 'Tá Senu',           rank: 'A', value: 2200 },
     { name: 'Lady Quần Tất Đen', rank: 'A', value: 2500 },
     { name: 'Đị Mi Xô',         rank: 'A', value: 2500 },
