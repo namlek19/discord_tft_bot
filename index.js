@@ -1607,10 +1607,11 @@ client.on('messageCreate', async message => {
     if (cmd === 'gacha') {
         const now = Date.now();
         const last = gachaCooldown.get(author.id) ?? 0;
-        if (now - last < 7000)
+        if (now - last < 7000) {
             message.reply(`Chờ **${((7000 - (now - last)) / 1000).toFixed(1)}s** nữa nhé!`)
                 .then(msg => setTimeout(() => msg.delete().catch(() => {}), 5000));
             return;
+        }
         gachaCooldown.set(author.id, now);
 
         const count = args[1] === '10' ? 10 : 1;
