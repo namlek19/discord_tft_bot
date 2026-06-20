@@ -1608,8 +1608,9 @@ client.on('messageCreate', async message => {
         const now = Date.now();
         const last = gachaCooldown.get(author.id) ?? 0;
         if (now - last < 7000) {
-            message.reply(`Chờ **${((7000 - (now - last)) / 1000).toFixed(1)}s** nữa nhé!`)
-                .then(msg => setTimeout(() => msg.delete().catch(() => {}), 5000));
+            const remaining = 7000 - (now - last);
+            message.reply(`Chờ **${(remaining / 1000).toFixed(1)}s** nữa nhé!`)
+                .then(msg => setTimeout(() => msg.delete().catch(() => {}), remaining));
             return;
         }
         gachaCooldown.set(author.id, now);
